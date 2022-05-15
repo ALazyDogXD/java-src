@@ -106,6 +106,7 @@ import java.util.Collection;
 public class ReentrantLock implements Lock, java.io.Serializable {
     private static final long serialVersionUID = 7373984872572414699L;
     /** Synchronizer providing all implementation mechanics */
+    // 同步器的实现
     private final Sync sync;
 
     /**
@@ -221,6 +222,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
         private static final long serialVersionUID = -3000897897090466540L;
 
         final void lock() {
+            // 获取锁
             acquire(1);
         }
 
@@ -282,6 +284,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
      * at which time the lock hold count is set to one.
      */
     public void lock() {
+        // 上锁
         sync.lock();
     }
 

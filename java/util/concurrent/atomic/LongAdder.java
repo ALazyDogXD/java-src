@@ -35,6 +35,7 @@
 
 package java.util.concurrent.atomic;
 import java.io.Serializable;
+import java.util.HashMap;
 
 /**
  * One or more variables that together maintain an initially zero
