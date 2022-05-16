@@ -908,6 +908,16 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * state).
      * @return true if successful
      */
+    // 失败的情况：
+    // 1. 线程池状态至少为 STOP
+    // 2. 线程池状态至少为 SHUTDOWN，但是任务队列为空
+    // 3. 线程池处于 SHUTDOWN，但是传入了新的任务
+    // 4. 工作线程数已超过最大线程数
+    // 5. 线程工厂生产出的线程处于非活跃状态
+    // 成功前提（满足下面所有情况）：
+    // 1. 工作线程数未超过最大线程数
+    // 2. 线程池处于 RUNNING 状态 或 线程池处于 SHUTDOWN 状态
+    // 但是没有传入新任务（即只是启动一个空闲工作线程去处理任务队列的任务）
     private boolean addWorker(Runnable firstTask, boolean core) {
         retry:
         for (;;) {
@@ -1071,39 +1081,77 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @return task, or null if the worker must exit, in which case
      *         workerCount is decremented
      */
+    // 方法返回 null 导致工作线程退出的四种情况：
+    // 1. 工作线程数超过了最大线程数(由于使用了 setMaximumPoolSize 方法)
+    // 2. 线程池为 STOP 状态
+    // 3. 线程池为 SHUTDOWN 状态并且任务队列为空
+    // 4. 该工作线程是超时可销毁的，并且超时获取任务，
+    // 不过超时后也可能又添加了新的任务，所以需要判断在任务队列不
+    // 为空时会至少保留一个线程去处理任务，具体细节看源码
     private Runnable getTask() {
+        // 下面是个循环，这个标示用于标示
+        // 上一次循环调用 poll() 时是否超时
         boolean timedOut = false; // Did the last poll() time out?
 
         for (;;) {
+            // 线程池控制参数
             int c = ctl.get();
+            // 线程池状态
             int rs = runStateOf(c);
 
             // Check if queue empty only if necessary.
+            // 1. 在 SHUTDOWN 状态下线程池不再接受任务但可以
+            // 处理工作队列中的任务，
+            // 所以当任务队列为空时工作线程可以退出，这里先减一，
+            // 返回 null 后该工作线程会退出。
+            // 2. 在 STOP 状态下工作线程不再处理任务队列的任务，
+            // 直接退出。
             if (rs >= SHUTDOWN && (rs >= STOP || workQueue.isEmpty())) {
                 decrementWorkerCount();
                 return null;
             }
 
+            // 工作线程数
             int wc = workerCountOf(c);
 
             // Are workers subject to culling?
+            // 表示该工作线程超时后是否会退出
             boolean timed = allowCoreThreadTimeOut || wc > corePoolSize;
 
+            // 在获取 wc 后，其他线程去重新设置 maximumPoolSize，
+            // 导致 wc 超过 maximumPoolSize
+            // 1. 当工作线程数大于最大线程数 或 该工作线程
+            // 是超时可销毁的并上次循环时调用 poll() 已超时。
+            // 并且
+            // 2. 满足任务队列为空 或 至少有一个工作线程(这是为了保证在任
+            // 务队列不为空的情况下至少有一个线程可以处理任务)
             if ((wc > maximumPoolSize || (timed && timedOut))
                 && (wc > 1 || workQueue.isEmpty())) {
+                // 自减成功后返回 null，线程退出
                 if (compareAndDecrementWorkerCount(c))
                     return null;
+                // 否则继续循环(这里不用 decrementWorkerCount()
+                // 方法循环自减的原因是防止最后两个并发进入这个 if
+                // 条件，并且任务队列不为空，那么如果是调用
+                // 的 decrementWorkerCount() 两个线程都会被销毁，
+                // 就没有工作线程去完成任务队列中剩下的任务了，所以需
+                // 要循环重新获取参数 c 去检查)
                 continue;
             }
 
             try {
+                // 如当前工作线程是超时可销毁的则用 poll() 方法
+                // 否则使用 take() 方法
                 Runnable r = timed ?
                     workQueue.poll(keepAliveTime, TimeUnit.NANOSECONDS) :
                     workQueue.take();
+                // 获取到任务，返回任务
                 if (r != null)
                     return r;
+                // 为获取到任务，超时
                 timedOut = true;
             } catch (InterruptedException retry) {
+                // 异常重试
                 timedOut = false;
             }
         }
@@ -1175,6 +1223,8 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                       runStateAtLeast(ctl.get(), STOP))) &&
                     !wt.isInterrupted())
                     wt.interrupt();
+                // 两层 try-catch 防止 beforeExecute
+                // 和 afterExecute 报出异常
                 try {
                     // 执行前的前置处理方法
                     beforeExecute(wt, task);
