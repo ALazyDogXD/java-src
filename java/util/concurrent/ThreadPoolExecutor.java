@@ -1036,30 +1036,49 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * @param w the worker
      * @param completedAbruptly if the worker died due to user exception
      */
+    // 如果是非异常导致线程退出，则在 getTask() 方法就已经执行了工作线
+    // 程数减一的操作，如果是异常导致退出，则需要工作线程数减一(由 getTask() 方法
+    // 异常也需要减一，getTask() 如果异常不会在其方法内部减一)
+    // 异常导致的线程退出会再添加一个新的空闲工作线程
     private void processWorkerExit(Worker w, boolean completedAbruptly) {
+        // 由于异常导致线程退出，在这里对工作线程数减一
         if (completedAbruptly) // If abrupt, then workerCount wasn't adjusted
             decrementWorkerCount();
 
+        // 所有对工作线程的操作都需要上锁
         final ReentrantLock mainLock = this.mainLock;
         mainLock.lock();
         try {
+            // 统计工作量
             completedTaskCount += w.completedTasks;
+            // 移除工作线程
             workers.remove(w);
         } finally {
             mainLock.unlock();
         }
 
+        // 尝试终止线程池
+        // 在任务队列为空，线程池状态为 STOP 或 SHUTDOWN 状态下，
+        // 如果工作线程数减为 0，则进行终止线程池的操作
         tryTerminate();
 
         int c = ctl.get();
+        // 如果线程池状态为 RUNNING 或 SHUTDOWN 状态
         if (runStateLessThan(c, STOP)) {
             if (!completedAbruptly) {
+                // 获取最小线程数
+                // 1. allowCoreThreadTimeOut 为 true，任务队列不为空，最小线程数为 1
+                // 2. allowCoreThreadTimeOut 为 true，任务队列为空，最小线程数为 0
+                // 3. allowCoreThreadTimeOut 为 false，最小线程数为 corePoolSize
                 int min = allowCoreThreadTimeOut ? 0 : corePoolSize;
                 if (min == 0 && ! workQueue.isEmpty())
                     min = 1;
+                // 当前工作线程数大于最小线程数直接返回
+                // 否则添加一个空闲工作线程
                 if (workerCountOf(c) >= min)
                     return; // replacement not needed
             }
+            // 如果是异常导致工作线程退出，则重新添加一个空闲工作线程
             addWorker(null, false);
         }
     }
