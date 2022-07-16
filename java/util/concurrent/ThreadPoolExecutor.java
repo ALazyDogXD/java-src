@@ -703,18 +703,32 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
      * from the queue during shutdown. The method is non-private to
      * allow access from ScheduledThreadPoolExecutor.
      */
+    // 如果线程池状态为 SHUTDOWN 并且工作线程数和任务队列为空 或
+    // 线程池状态为 STOP 并且工作线程数为零，则线程池状态会变为
+    // TERMINATED
+    // 必须在所有可能关闭线程池的操作后调用该方法
+    // 如果工作线程数不为零，则需要中断空闲的工作线程来传播关闭信息
+    // (工作线程退出时也会调用该方法)
     final void tryTerminate() {
         for (;;) {
             int c = ctl.get();
+            // 满足其中一个条件则返回
+            // 1. 当前为 RUNNING 状态
+            // 2. 当前至少为 TIDYING 状态
+            // 3. 当前为 SHUTDOWN 且任务队列不为空
             if (isRunning(c) ||
                 runStateAtLeast(c, TIDYING) ||
                 (runStateOf(c) == SHUTDOWN && ! workQueue.isEmpty()))
                 return;
+            // 如果工作线程数不为 0，则执行中断所有工作线程的操作并返回
+            // 等待下次 tryTerminate 的调用(因为每次工作线程退出都会
+            // 再调用一次 tryTerminate)
             if (workerCountOf(c) != 0) { // Eligible to terminate
                 interruptIdleWorkers(ONLY_ONE);
                 return;
             }
 
+            // 上锁修改线程池状态为 TIDYING，并执行 terminated 扩展方法
             final ReentrantLock mainLock = this.mainLock;
             mainLock.lock();
             try {
@@ -722,9 +736,12 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                     try {
                         terminated();
                     } finally {
+                        // 将线程池状态改为 TERMINATED
                         ctl.set(ctlOf(TERMINATED, 0));
+                        // 唤醒所有调用 awaitTermination 方法的线程
                         termination.signalAll();
                     }
+                    // 线程池关闭
                     return;
                 }
             } finally {
@@ -1230,6 +1247,7 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         try {
             // 循环获取任务去执行
             while (task != null || (task = getTask()) != null) {
+                // 锁住工作线程防止被中断
                 w.lock();
                 // If pool is stopping, ensure thread is interrupted;
                 // if not, ensure thread is not interrupted.  This
@@ -1518,12 +1536,15 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         try {
             // 判断调用者是否有权限关闭线程池
             checkShutdownAccess();
+            // 自旋修改线程池状态为 SHUTDOWN
             advanceRunState(SHUTDOWN);
+            // 中断所有空闲工作线程
             interruptIdleWorkers();
             onShutdown(); // hook for ScheduledThreadPoolExecutor
         } finally {
             mainLock.unlock();
         }
+        // 尝试关闭线程池
         tryTerminate();
     }
 
