@@ -1162,14 +1162,20 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
         boolean completedAbruptly = true;
         try {
             // 循环获取任务去执行
+            // 在 getTask() 会处理空闲超时的相关逻辑
             while (task != null || (task = getTask()) != null) {
                 w.lock();
                 // If pool is stopping, ensure thread is interrupted;
                 // if not, ensure thread is not interrupted.  This
                 // requires a recheck in second case to deal with
                 // shutdownNow race while clearing interrupt
-                // 如果线程池在 STOP, 中断工作线程
+                // 如果线程池在 STOP 状态,
+                // 即 runStateAtLeast(ctl.get(), STOP) 为 true, 中断工作线程
                 // 如果线程池不是 STOP, 则要保证工作线程不在中断状态
+                // 即 第一次 runStateAtLeast(ctl.get(), STOP) 为 false
+                // Thread.interrupted() 也为 false, 第二次判断
+                // runStateAtLeast(ctl.get(), STOP) 是为了防止在第一次判
+                // 断之后其他线程调用了 shutdown 方法
                 if ((runStateAtLeast(ctl.get(), STOP) ||
                      (Thread.interrupted() &&
                       runStateAtLeast(ctl.get(), STOP))) &&
@@ -1199,8 +1205,10 @@ public class ThreadPoolExecutor extends AbstractExecutorService {
                     w.unlock();
                 }
             }
+            // 工作线程是否被中断
             completedAbruptly = false;
         } finally {
+            // 执行工作线程的退出
             processWorkerExit(w, completedAbruptly);
         }
     }
